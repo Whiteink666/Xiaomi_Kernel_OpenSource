@@ -1,0 +1,54 @@
+name: Build K40Pro haydn Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: '自定义内核名称'
+        required: true
+        default: '5.4_SukiSUUltra_By白墨(Whiteink)_工作室'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git make bc bison flex libssl-dev libncurses-dev \
+            gcc-aarch64-linux-gnu zip unzip dwarves
+
+      - name: Build kernel
+        run: |
+          make ARCH=arm64 clean mrproper
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- haydn_defconfig
+
+          ./scripts/config --set-str CONFIG_LOCALVERSION "-${{ github.event.inputs.kernel_name }}"
+
+          ./scripts/config -d CONFIG_WERROR
+          ./scripts/config -d CONFIG_WERROR_FRAME_WARN
+          ./scripts/config --set-val CONFIG_FRAME_WARN 16384
+
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            KBUILD_CFLAGS="-Wno-everything" \
+            -j$(nproc)
+
+      - name: Pack AnyKernel3
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cp arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          cd AnyKernel3
+          sed -i 's/^device.name1=.*/device.name1=haydn/' anykernel.sh
+          zip -r9 "Kernel_haydn_custom.zip" * -x .git README.md
+
+      - name: Upload kernel zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel_haydn
+          path: AnyKernel3/*.zip
