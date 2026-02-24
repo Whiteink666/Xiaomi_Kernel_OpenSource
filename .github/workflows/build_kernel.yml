@@ -6,48 +6,51 @@ on:
       kernel_name:
         description: '自定义内核名称'
         required: true
-        default: '5.4_SukiSUUltra_By白墨(Whiteink)_工作室'
+        default: '5.4_SukiSUUltra_By白墨(Whiteink)工作室'
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout kernel source
+      - name: Checkout your haydn-r-oss branch
         uses: actions/checkout@v4
         with:
+          repository: Whiteink666/Xiaomi_Kernel_OpenSource
+          ref: haydn-r-oss
           fetch-depth: 1
 
-      - name: Install dependencies
+      - name: 安装依赖 + 修复 python2 不存在问题
         run: |
           sudo apt update
-          sudo apt install -y \
-            git make bc bison flex libssl-dev libncurses-dev \
-            gcc-aarch64-linux-gnu zip unzip dwarves
+          sudo apt install -y git make bc bison flex libssl-dev libncurses-dev gcc-aarch64-linux-gnu zip unzip dwarves
+          sudo ln -s /usr/bin/python3 /usr/bin/python
+          sudo ln -s /usr/bin/python3 /usr/bin/python2
 
-      - name: Build kernel
+      - name: 配置内核
         run: |
           make ARCH=arm64 clean mrproper
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- haydn_defconfig
 
           ./scripts/config --set-str CONFIG_LOCALVERSION "-${{ github.event.inputs.kernel_name }}"
-
           ./scripts/config -d CONFIG_WERROR
           ./scripts/config -d CONFIG_WERROR_FRAME_WARN
           ./scripts/config --set-val CONFIG_FRAME_WARN 16384
 
+      - name: 开始编译
+        run: |
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            KBUILD_CFLAGS="-Wno-everything" \
+            KBUILD_CFLAGS="-Wno-everything -Wno-format -Wno-address-of-packed-member" \
             -j$(nproc)
 
-      - name: Pack AnyKernel3
+      - name: 打包 AnyKernel3
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp arch/arm64/boot/Image.gz-dtb AnyKernel3/
           cd AnyKernel3
           sed -i 's/^device.name1=.*/device.name1=haydn/' anykernel.sh
-          zip -r9 "Kernel_haydn_custom.zip" * -x .git README.md
+          zip -r9 Kernel_haydn.zip * -x .git README.md
 
-      - name: Upload kernel zip
+      - name: 上传内核包
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_haydn
