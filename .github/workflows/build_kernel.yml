@@ -19,12 +19,11 @@ jobs:
           ref: haydn-r-oss
           fetch-depth: 1
 
-      - name: 安装依赖 + 修复 python2 不存在问题
+      - name: 安装依赖
         run: |
           sudo apt update
           sudo apt install -y git make bc bison flex libssl-dev libncurses-dev gcc-aarch64-linux-gnu zip unzip dwarves
-          sudo ln -s /usr/bin/python3 /usr/bin/python
-          sudo ln -s /usr/bin/python3 /usr/bin/python2
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2
 
       - name: 配置内核
         run: |
@@ -36,13 +35,13 @@ jobs:
           ./scripts/config -d CONFIG_WERROR_FRAME_WARN
           ./scripts/config --set-val CONFIG_FRAME_WARN 16384
 
-      - name: 开始编译
+      - name: 编译内核
         run: |
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            KBUILD_CFLAGS="-Wno-everything -Wno-format -Wno-address-of-packed-member" \
+            KBUILD_CFLAGS="-Wno-everything" \
             -j$(nproc)
 
-      - name: 打包 AnyKernel3
+      - name: 打包
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp arch/arm64/boot/Image.gz-dtb AnyKernel3/
@@ -50,7 +49,7 @@ jobs:
           sed -i 's/^device.name1=.*/device.name1=haydn/' anykernel.sh
           zip -r9 Kernel_haydn.zip * -x .git README.md
 
-      - name: 上传内核包
+      - name: 上传
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_haydn
