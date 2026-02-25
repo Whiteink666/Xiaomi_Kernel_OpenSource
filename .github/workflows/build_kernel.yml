@@ -1,57 +1,113 @@
-name: Build K40Pro haydn Kernel
+name: 🚀 Auto Build Haydn Kernel
 
 on:
-  workflow_dispatch:
-    inputs:
-      kernel_name:
-        description: '自定义内核名称'
-        required: true
-        default: '5.4_SukiSUUltra_By白墨(Whiteink)工作室'
+  push:
+    branches: [ main ]          # 推送到 main 分支时触发
+  workflow_dispatch:            # 允许手动触发
+  schedule:
+    - cron: '0 2 * * 0'       # 每周日 UTC 2:00 自动构建（可选）
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout your haydn-r-oss branch
-        uses: actions/checkout@v4
-        with:
-          repository: Whiteink666/Xiaomi_Kernel_OpenSource
-          ref: haydn-r-oss
-          fetch-depth: 1
+    timeout-minutes: 360        # 最多 6 小时
 
-      - name: 安装依赖 + 修复 python2 不存在问题
+    env:
+      KERNEL_NAME: "5.4_SukiSUUltra_By白墨(Whiteink)工作室"     # ←←← 在这里改你的内核名字！
+      DEVICE: "haydn"
+      DEFCONFIG: "vendor/haydn_defconfig"
+      CLANG_VERSION: "r450784c"      # Android 12L Clang
+      ANYKERNEL_URL: "https://github.com/osm0sis/AnyKernel3"
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y git make bc bison flex libssl-dev libncurses-dev gcc-aarch64-linux-gnu zip unzip dwarves
-          sudo ln -s /usr/bin/python3 /usr/bin/python
-          sudo ln -s /usr/bin/python3 /usr/bin/python2
+          sudo apt install -y \
+            bc bison build-essential ccache curl flex \
+            git gnupg libncurses5-dev libssl-dev \
+            lzop rsync squashfs-tools xz-utils zip zlib1g-dev \
+            python3 wget
 
-      - name: 配置内核
+      - name: 📦 Download Clang Toolchain (Cached)
+        id: clang-cache
+        uses: actions/cache@v4
+        with:
+          path: toolchain/clang-${{ env.CLANG_VERSION }}
+          key: clang-${{ env.CLANG_VERSION }}-v2
+
+      - name: 🛠️ Setup Clang (if not cached)
+        if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
-          make ARCH=arm64 clean mrproper
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- haydn_defconfig
+          mkdir -p toolchain
+          cd toolchain
+          echo "Downloading Clang ${CLANG_VERSION}..."
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-release/clang-${CLANG_VERSION}.tar.gz
+          mkdir -p clang-${CLANG_VERSION}
+          tar -xf clang-${CLANG_VERSION}.tar.gz -C clang-${CLANG_VERSION}
+          cd ..
 
-          ./scripts/config --set-str CONFIG_LOCALVERSION "-${{ github.event.inputs.kernel_name }}"
-          ./scripts/config -d CONFIG_WERROR
-          ./scripts/config -d CONFIG_WERROR_FRAME_WARN
-          ./scripts/config --set-val CONFIG_FRAME_WARN 16384
-
-      - name: 开始编译
+      - name: 🔧 Set Environment
         run: |
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            KBUILD_CFLAGS="-Wno-everything -Wno-format -Wno-address-of-packed-member" \
-            -j$(nproc)
+          echo "PATH=$(pwd)/toolchain/clang-${CLANG_VERSION}/bin:$PATH" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=GitHub" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=Actions" >> $GITHUB_ENV
 
-      - name: 打包 AnyKernel3
+      - name: 🧹 Clean & Configure
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          cp arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          make O=out clean
+          make O=out mrproper
+          make O=out ${{ env.DEFCONFIG }}
+
+      - name: ⚡ Compile Kernel with Custom Name
+        run: |
+          BUILD_START=$(date +"%s")
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LOCALVERSION="-${KERNEL_NAME}-$(date +%Y%m%d)"
+          BUILD_END=$(date +"%s")
+          echo "✅ Build took $((BUILD_END - BUILD_START)) seconds"
+
+      - name: 📤 Copy Kernel Image
+        run: |
+          cp out/arch/arm64/boot/Image.gz-dtb ./Image.gz-dtb
+          ls -lh Image.gz-dtb
+
+      - name: 📦 Prepare AnyKernel3 ZIP
+        run: |
+          git clone $ANYKERNEL_URL
+          cp Image.gz-dtb AnyKernel3/
           cd AnyKernel3
-          sed -i 's/^device.name1=.*/device.name1=haydn/' anykernel.sh
-          zip -r9 Kernel_haydn.zip * -x .git README.md
+          zip -r9 "../${KERNEL_NAME}-${DEVICE}-$(date +%Y%m%d).zip" .
+          cd ..
 
-      - name: 上传内核包
+      - name: 📤 Upload as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_haydn
-          path: AnyKernel3/*.zip
+          name: kernel-${{ env.DEVICE }}-${{ github.run_number }}
+          path: |
+            *.zip
+            Image.gz-dtb
+
+      - name: 🚀 Create GitHub Release (Optional)
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"
+          tag_name: v$(date +%Y%m%d)-auto
+          name: "Auto Build - $(date +%Y-%m-%d)"
+          body: "Automatically built kernel: `${{ env.KERNEL_NAME }}` for `${{ env.DEVICE }}`"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
