@@ -2,21 +2,21 @@ name: 🚀 Auto Build Haydn Kernel
 
 on:
   push:
-    branches: [ main ]          # 推送到 main 分支时触发
-  workflow_dispatch:            # 允许手动触发
+    branches: [ main ]
+  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * 0'       # 每周日 UTC 2:00 自动构建（可选）
+    - cron: '0 2 * * 0'  # 每周日 UTC 2:00 自动构建（可选）
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360        # 最多 6 小时
+    timeout-minutes: 360
 
     env:
-      KERNEL_NAME: "5.4_SukiSUUltra_By白墨(Whiteink)工作室"     # ←←← 在这里改你的内核名字！
+      KERNEL_NAME: "5.4_SukiSUUltra_By白墨(Whiteink)工作室"        # ←←← 修改这里自定义内核名
       DEVICE: "haydn"
       DEFCONFIG: "vendor/haydn_defconfig"
-      CLANG_VERSION: "r450784c"      # Android 12L Clang
+      CLANG_VERSION: "r450784c"
       ANYKERNEL_URL: "https://github.com/osm0sis/AnyKernel3"
 
     steps:
@@ -32,33 +32,39 @@ jobs:
             lzop rsync squashfs-tools xz-utils zip zlib1g-dev \
             python3 wget
 
-      - name: 📦 Download Clang Toolchain (Cached)
+      - name: 📦 Cache Clang Toolchain
         id: clang-cache
         uses: actions/cache@v4
         with:
           path: toolchain/clang-${{ env.CLANG_VERSION }}
-          key: clang-${{ env.CLANG_VERSION }}-v2
+          key: clang-${{ env.CLANG_VERSION }}-v3
 
-      - name: 🛠️ Setup Clang (if not cached)
+      - name: 🛠️ Download & Extract Prebuilt Clang (if not cached)
         if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p toolchain
           cd toolchain
-          echo "Downloading Clang ${CLANG_VERSION}..."
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12L-release/clang-${CLANG_VERSION}.tar.gz
-          mkdir -p clang-${CLANG_VERSION}
-          tar -xf clang-${CLANG_VERSION}.tar.gz -C clang-${CLANG_VERSION}
+          echo "📥 Downloading Clang ${{ env.CLANG_VERSION }} from GitHub..."
+          wget -q --show-progress \
+            https://github.com/android-linux-stable/clang/releases/download/${{ env.CLANG_VERSION }}/clang-${{ env.CLANG_VERSION }}.tar.xz \
+            -O clang.tar.xz
+          mkdir -p clang-${{ env.CLANG_VERSION }}
+          tar -xf clang.tar.xz -C clang-${{ env.CLANG_VERSION }} --strip-components=1
           cd ..
 
-      - name: 🔧 Set Environment
+      - name: 🔧 Set Build Environment
         run: |
-          echo "PATH=$(pwd)/toolchain/clang-${CLANG_VERSION}/bin:$PATH" >> $GITHUB_ENV
+          echo "${{ github.workspace }}/toolchain/clang-${{ env.CLANG_VERSION }}/bin" >> $GITHUB_PATH
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=GitHub" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=Actions" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=CI" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=GitHub" >> $GITHUB_ENV
 
-      - name: 🧹 Clean & Configure
+      - name: 🔍 Verify Clang
+        run: |
+          clang --version
+
+      - name: 🧹 Clean & Configure Kernel
         run: |
           make O=out clean
           make O=out mrproper
@@ -78,19 +84,21 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             LOCALVERSION="-${KERNEL_NAME}-$(date +%Y%m%d)"
           BUILD_END=$(date +"%s")
-          echo "✅ Build took $((BUILD_END - BUILD_START)) seconds"
+          echo "✅ Kernel built in $((BUILD_END - BUILD_START)) seconds"
 
       - name: 📤 Copy Kernel Image
         run: |
           cp out/arch/arm64/boot/Image.gz-dtb ./Image.gz-dtb
           ls -lh Image.gz-dtb
 
-      - name: 📦 Prepare AnyKernel3 ZIP
+      - name: 📦 Package with AnyKernel3
         run: |
           git clone $ANYKERNEL_URL
           cp Image.gz-dtb AnyKernel3/
           cd AnyKernel3
-          zip -r9 "../${KERNEL_NAME}-${DEVICE}-$(date +%Y%m%d).zip" .
+          ZIP_NAME="${KERNEL_NAME}-${DEVICE}-$(date +%Y%m%d).zip"
+          zip -r9 "../$ZIP_NAME" .
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
           cd ..
 
       - name: 📤 Upload as Artifact
@@ -101,13 +109,17 @@ jobs:
             *.zip
             Image.gz-dtb
 
-      - name: 🚀 Create GitHub Release (Optional)
+      - name: 🚀 Create GitHub Release (on manual trigger or main branch)
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           files: "*.zip"
           tag_name: v$(date +%Y%m%d)-auto
           name: "Auto Build - $(date +%Y-%m-%d)"
-          body: "Automatically built kernel: `${{ env.KERNEL_NAME }}` for `${{ env.DEVICE }}`"
+          body: |
+            Kernel: `${{ env.KERNEL_NAME }}`  
+            Device: `${{ env.DEVICE }}`  
+            Built on: $(date)  
+            Based on: Xiaomi haydn-r-oss
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
