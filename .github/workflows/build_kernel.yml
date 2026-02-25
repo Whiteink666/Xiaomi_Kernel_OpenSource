@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 360
 
     env:
-      # ⚠️ 安全内核名：仅使用字母、数字、点、下划线、连字符
+      # 安全内核名（仅 ASCII 字符）
       KERNEL_NAME: "5.4_SukiSUUltra_By_Whiteink_Studio"
       DEVICE: "haydn"
       DEFCONFIG: "vendor/haydn_defconfig"
@@ -38,17 +38,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: toolchain/clang-${{ env.CLANG_VERSION }}
-          key: clang-${{ env.CLANG_VERSION }}-v4
+          key: clang-${{ env.CLANG_VERSION }}-v5
 
-      - name: 🛠️ Download Clang with Retry (if not cached)
+      - name: 🛠️ Download Clang from NeuralNerf (with retry)
         if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p toolchain
           cd toolchain
-          CLANG_URL="https://github.com/android-linux-stable/clang/releases/download/${CLANG_VERSION}/clang-${CLANG_VERSION}.tar.xz"
+          # ✅ 使用真实存在的链接
+          CLANG_URL="https://github.com/NeuralNerf/toolchains/releases/download/clang-${CLANG_VERSION}/clang-${CLANG_VERSION}.tar.xz"
           echo "📥 Downloading Clang ${CLANG_VERSION} from: $CLANG_URL"
-          
-          # 尝试最多 3 次，避免临时网络失败
+
           for i in {1..3}; do
             echo "Attempt $i..."
             if curl -fL --progress-bar -o clang.tar.xz "$CLANG_URL"; then
@@ -59,7 +59,7 @@ jobs:
               sleep 5
             fi
             if [ $i -eq 3 ]; then
-              echo "💥 All retries failed. Exiting."
+              echo "💥 All retries failed."
               exit 1
             fi
           done
@@ -114,7 +114,6 @@ jobs:
           cd AnyKernel3
           ZIP_NAME="${KERNEL_NAME}-${DEVICE}.zip"
           zip -r9 "../$ZIP_NAME" .
-          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
           cd ..
 
       - name: 📤 Upload Artifact
@@ -125,7 +124,7 @@ jobs:
             *.zip
             Image.gz-dtb
 
-      - name: 🚀 Create Release (manual or main branch)
+      - name: 🚀 Create Release
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
