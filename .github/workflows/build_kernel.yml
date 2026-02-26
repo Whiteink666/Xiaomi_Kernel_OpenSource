@@ -1,9 +1,7 @@
 name: 🚀 Build K40 Pro Kernel 5.4 (GKI + Clang-15)
 
 on:
-  workflow_dispatch:  # 手动触发
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -28,11 +26,10 @@ jobs:
             lzop rsync squashfs-tools xz-utils zip zlib1g-dev \
             python3 clang-15 lld-15 llvm-15
 
-      - name: 🐍 Install Python 2 (for Xiaomi scripts)
+      - name: 🐍 Install Python 2
         run: |
           sudo apt install -y python2
           sudo ln -sf /usr/bin/python2 /usr/bin/python
-          echo "Python 2 installed: $(python --version)"
 
       - name: 🔧 Set Environment
         run: |
@@ -41,26 +38,26 @@ jobs:
           echo "KBUILD_BUILD_USER=Whiteink" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=GitHub" >> $GITHUB_ENV
 
-      - name: 🔍 Verify Config Files Exist
+      - name: 🔍 Verify Config Files
         run: |
           ls kernel/configs/
           ls arch/arm64/configs/vendor/
 
+      - name: 🧹 Clean Source Tree FIRST (Critical!)
+        run: |
+          # 清理源码根目录（必须！）
+          make mrproper
+          # 创建输出目录
+          mkdir -p out
+
       - name: 🧩 Generate Full .config (Merge GKI Fragments)
         run: |
-          mkdir -p out
-          # Step 1: Start with base config
+          # 从干净状态开始
           cp kernel/configs/android-base.config out/.config
-          # Step 2: Merge recommended options
           ./scripts/kconfig/merge_config.sh out/.config \
             kernel/configs/android-recommended.config \
             arch/arm64/configs/vendor/haydn_GKI.config
-          # Step 3: Validate
-          if [ ! -f "out/.config" ]; then
-            echo "❌ Failed to generate .config"
-            exit 1
-          fi
-          echo "✅ Full .config generated successfully"
+          echo "✅ .config generated in out/"
 
       - name: ⚡ Compile Kernel with Clang-15
         run: |
@@ -76,7 +73,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             LOCALVERSION="-${KERNEL_NAME}_GKI"
           BUILD_END=$(date +"%s")
-          echo "✅ Kernel built in $((BUILD_END - BUILD_START)) seconds"
+          echo "✅ Build time: $((BUILD_END - BUILD_START)) seconds"
 
       - name: 📤 Copy Kernel Image
         run: |
@@ -104,18 +101,13 @@ jobs:
           name: kernel-${{ env.DEVICE }}
           path: "*.zip"
 
-      - name: 🚀 Create GitHub Release
+      - name: 🚀 Create Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           files: "*.zip"
           tag_name: v$(date +%Y%m%d)-5.4-GKI
           name: "K40 Pro Kernel 5.4 GKI - $(date +%Y-%m-%d)"
-          body: |
-            Custom kernel for Redmi K40 Pro (haydn)
-            - Built from your repo (`haydn-r-oss`)
-            - Config: Merged `android-base` + `android-recommended` + `haydn_GKI.config`
-            - Toolchain: Clang-15
-            - Name: `${{ env.KERNEL_NAME }}_GKI`
+          body: "Built using GKI fragments | Name: `${{ env.KERNEL_NAME }}_GKI`"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
