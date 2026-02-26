@@ -1,4 +1,4 @@
-name: 🚀 Build K40 Pro Kernel 5.4 with Clang-15
+name: 🚀 Build K40 Pro Kernel 5.4 (Official Source)
 
 on:
   workflow_dispatch:
@@ -11,13 +11,18 @@ jobs:
     env:
       KERNEL_NAME: "5.4_SukiSUUltra_By_Whiteink_Studio"
       DEVICE: "haydn"
-      # ✅ 使用正确的 defconfig（根据小米官方源）
-      DEFCONFIG: "vendor/haydn-perf_defconfig"
+      DEFCONFIG: "vendor/haydn-perf_defconfig"  # 小米官方路径
       ANYKERNEL_URL: "https://github.com/osm0sis/AnyKernel3"
 
     steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+      - name: 📥 Setup Official Kernel Source
+        run: |
+          git init
+          git remote add origin https://github.com/MiCode/Xiaomi_Kernel_OpenSource
+          git fetch --depth=1 origin haydn-r-oss
+          git checkout FETCH_HEAD
+          echo "✅ Checked out haydn-r-oss branch"
+          ls arch/arm64/configs/vendor/  # 验证文件存在
 
       - name: ⚙️ Install Dependencies
         run: |
@@ -28,7 +33,7 @@ jobs:
             lzop rsync squashfs-tools xz-utils zip zlib1g-dev \
             python3 clang-15 lld-15 llvm-15
 
-      - name: 🐍 Install Python 2 (required by Xiaomi kernel scripts)
+      - name: 🐍 Install Python 2 (for Xiaomi scripts)
         run: |
           sudo apt install -y python2
           sudo ln -sf /usr/bin/python2 /usr/bin/python
@@ -40,22 +45,13 @@ jobs:
           echo "KBUILD_BUILD_USER=Whiteink" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=GitHub" >> $GITHUB_ENV
 
-      - name: 🔍 Verify Tools
-        run: |
-          clang-15 --version
-          python --version
-
-      - name: 📂 List Available Defconfigs (for debugging)
-        run: |
-          ls arch/arm64/configs/*haydn*
-
       - name: 🧹 Clean & Configure
         run: |
           make O=out clean
           make O=out mrproper
           make O=out ${{ env.DEFCONFIG }}
 
-      - name: ⚡ Compile Kernel 5.4
+      - name: ⚡ Compile Kernel 5.4 with Clang-15
         run: |
           BUILD_START=$(date +"%s")
           make -j$(nproc --all) O=out \
@@ -98,6 +94,6 @@ jobs:
           files: "*.zip"
           tag_name: v$(date +%Y%m%d)-5.4
           name: "K40 Pro Kernel 5.4 - $(date +%Y-%m-%d)"
-          body: "Built with Clang-15 | Name: `${{ env.KERNEL_NAME }}`"
+          body: "Built from official MiCode/haydn-r-oss | Name: `${{ env.KERNEL_NAME }}`"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
