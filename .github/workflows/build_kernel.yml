@@ -1,8 +1,6 @@
 name: 🚀 Build K40 Pro Kernel 5.4 with Clang-15
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -11,17 +9,17 @@ jobs:
     timeout-minutes: 360
 
     env:
-      # 安全内核名：仅使用字母、数字、下划线、点、连字符
       KERNEL_NAME: "5.4_SukiSUUltra_By_Whiteink_Studio"
       DEVICE: "haydn"
-      DEFCONFIG: "vendor/haydn_defconfig"   # ← 如果报错，请改为你仓库中的实际路径
+      # ✅ 使用正确的 defconfig（根据小米官方源）
+      DEFCONFIG: "vendor/haydn-perf_defconfig"
       ANYKERNEL_URL: "https://github.com/osm0sis/AnyKernel3"
 
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: ⚙️ Install Dependencies + Clang-15
+      - name: ⚙️ Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -30,26 +28,34 @@ jobs:
             lzop rsync squashfs-tools xz-utils zip zlib1g-dev \
             python3 clang-15 lld-15 llvm-15
 
-      - name: 🔧 Set Build Environment
+      - name: 🐍 Install Python 2 (required by Xiaomi kernel scripts)
+        run: |
+          sudo apt install -y python2
+          sudo ln -sf /usr/bin/python2 /usr/bin/python
+
+      - name: 🔧 Set Environment
         run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
           echo "KBUILD_BUILD_USER=Whiteink" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=GitHub" >> $GITHUB_ENV
 
-      - name: 🔍 Verify Clang-15
+      - name: 🔍 Verify Tools
         run: |
           clang-15 --version
+          python --version
 
-      - name: 🧹 Clean & Configure Kernel
+      - name: 📂 List Available Defconfigs (for debugging)
+        run: |
+          ls arch/arm64/configs/*haydn*
+
+      - name: 🧹 Clean & Configure
         run: |
           make O=out clean
           make O=out mrproper
-          # 可选：列出所有 defconfig 确认路径（如果失败可取消注释）
-          # ls arch/arm64/configs/
           make O=out ${{ env.DEFCONFIG }}
 
-      - name: ⚡ Compile Kernel 5.4 with Clang-15
+      - name: ⚡ Compile Kernel 5.4
         run: |
           BUILD_START=$(date +"%s")
           make -j$(nproc --all) O=out \
@@ -63,7 +69,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             LOCALVERSION="-${KERNEL_NAME}"
           BUILD_END=$(date +"%s")
-          echo "✅ Kernel 5.4 built in $((BUILD_END - BUILD_START)) seconds"
+          echo "✅ Build time: $((BUILD_END - BUILD_START)) seconds"
 
       - name: 📤 Copy Kernel Image
         run: |
@@ -79,23 +85,19 @@ jobs:
           zip -r9 "../$ZIP_NAME" .
           cd ..
 
-      - name: 📤 Upload as Artifact
+      - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kernel-${{ env.DEVICE }}
-          path: |
-            *.zip
-            Image.gz-dtb
+          path: "*.zip"
 
-      - name: 🚀 Create GitHub Release (manual trigger only)
+      - name: 🚀 Create Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           files: "*.zip"
           tag_name: v$(date +%Y%m%d)-5.4
           name: "K40 Pro Kernel 5.4 - $(date +%Y-%m-%d)"
-          body: |
-            Custom kernel built with **Clang-15** for Redmi K40 Pro (haydn).
-            Name: `${{ env.KERNEL_NAME }}`
+          body: "Built with Clang-15 | Name: `${{ env.KERNEL_NAME }}`"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
