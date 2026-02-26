@@ -11,18 +11,15 @@ jobs:
     timeout-minutes: 360
 
     env:
-      # 安全内核名（仅 ASCII 字符）
       KERNEL_NAME: "5.4_SukiSUUltra_By_Whiteink_Studio"
       DEVICE: "haydn"
-      # ✅ 使用仓库中真实存在的 defconfig
-      DEFCONFIG: "vendor/haydn_GKI.config"
       ANYKERNEL_URL: "https://github.com/osm0sis/AnyKernel3"
 
     steps:
-      - name: 📥 Checkout Your Repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Install Build Dependencies
+      - name: ⚙️ Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -31,32 +28,39 @@ jobs:
             lzop rsync squashfs-tools xz-utils zip zlib1g-dev \
             python3 clang-15 lld-15 llvm-15
 
-      - name: 🐍 Install Python 2 (Required by Xiaomi Kernel Scripts)
+      - name: 🐍 Install Python 2 (for Xiaomi scripts)
         run: |
           sudo apt install -y python2
           sudo ln -sf /usr/bin/python2 /usr/bin/python
-          python --version
+          echo "Python 2 installed: $(python --version)"
 
-      - name: 🔧 Set Kernel Build Environment
+      - name: 🔧 Set Environment
         run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
           echo "KBUILD_BUILD_USER=Whiteink" >> $GITHUB_ENV
           echo "KBUILD_BUILD_HOST=GitHub" >> $GITHUB_ENV
 
-      - name: 🔍 Verify Defconfig Exists
+      - name: 🔍 Verify Config Files Exist
         run: |
-          ls -l arch/arm64/configs/vendor/
-          if [ ! -f "arch/arm64/configs/vendor/haydn_GKI.config" ]; then
-            echo "❌ haydn_GKI.config not found!"
+          ls kernel/configs/
+          ls arch/arm64/configs/vendor/
+
+      - name: 🧩 Generate Full .config (Merge GKI Fragments)
+        run: |
+          mkdir -p out
+          # Step 1: Start with base config
+          cp kernel/configs/android-base.config out/.config
+          # Step 2: Merge recommended options
+          ./scripts/kconfig/merge_config.sh out/.config \
+            kernel/configs/android-recommended.config \
+            arch/arm64/configs/vendor/haydn_GKI.config
+          # Step 3: Validate
+          if [ ! -f "out/.config" ]; then
+            echo "❌ Failed to generate .config"
             exit 1
           fi
-
-      - name: 🧹 Clean & Configure Kernel
-        run: |
-          make O=out clean
-          make O=out mrproper
-          make O=out ${{ env.DEFCONFIG }}
+          echo "✅ Full .config generated successfully"
 
       - name: ⚡ Compile Kernel with Clang-15
         run: |
@@ -74,15 +78,12 @@ jobs:
           BUILD_END=$(date +"%s")
           echo "✅ Kernel built in $((BUILD_END - BUILD_START)) seconds"
 
-      - name: 📤 Copy Kernel Image (Image.gz-dtb)
+      - name: 📤 Copy Kernel Image
         run: |
           if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
             cp out/arch/arm64/boot/Image.gz-dtb ./Image.gz-dtb
-          elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
-            # Fallback: some kernels only output Image.gz
-            cat out/arch/arm64/boot/Image.gz > ./Image.gz-dtb
           else
-            echo "❌ Kernel image not found!"
+            echo "❌ Image.gz-dtb not found!"
             ls out/arch/arm64/boot/
             exit 1
           fi
@@ -97,13 +98,13 @@ jobs:
           zip -r9 "../$ZIP_NAME" .
           cd ..
 
-      - name: 📤 Upload Build Artifact
+      - name: 📤 Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kernel-${{ env.DEVICE }}
           path: "*.zip"
 
-      - name: 🚀 Create GitHub Release (Manual Trigger Only)
+      - name: 🚀 Create GitHub Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
@@ -113,7 +114,7 @@ jobs:
           body: |
             Custom kernel for Redmi K40 Pro (haydn)
             - Built from your repo (`haydn-r-oss`)
-            - Config: `${{ env.DEFCONFIG }}`
+            - Config: Merged `android-base` + `android-recommended` + `haydn_GKI.config`
             - Toolchain: Clang-15
             - Name: `${{ env.KERNEL_NAME }}_GKI`
         env:
